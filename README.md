@@ -1,5 +1,7 @@
 # loga
 
+[English](README.md) | [中文](README.zh-CN.md)
+
 A Kotlin Multiplatform logging library backed by `mmap`.
 
 Log lines are written into a memory-mapped file, so writes are cheap and survive
