@@ -104,7 +104,8 @@ data class LogConfig(
     val level: Int = Level.DEBUG,            // 最低输出级别
     val formatter: Formatter = DefaultFormatter,
     val retentionDays: Int = 7,              // 日志保留天数，可配置
-    val appenders: List<Appender> = listOf(ConsoleAppender()),  // 追加在文件 appender 之后
+    val isDebug: Boolean = true,             // true: 文件 + 控制台；false: 仅文件
+    val appenders: List<Appender>? = null,   // null 时由 isDebug 决定，追加在文件 appender 之后
 )
 ```
 
@@ -123,7 +124,7 @@ interface Appender {
 ```
 
 - **`Formatter`**：自定义日志行格式，默认输出 `L/TAG: msg\n`。
-- **`Appender`**：自定义输出目标。文件落盘（`FileAppender`）始终启用，`appenders` 中的 appender 追加在其后；默认追加 `ConsoleAppender`（平台控制台）。传 `emptyList()` 可关闭控制台输出。
+- **`Appender`**：自定义输出目标。文件落盘（`FileAppender`）始终启用，`appenders` 中的 appender 追加在其后；`appenders = null` 时由 `isDebug` 决定：`true` 追加 `ConsoleAppender`（平台控制台），`false` 仅文件。传 `emptyList()` 可显式关闭控制台输出。
 
 > 设计取舍：参考实现 Log4a 有 `Logger` + `AppenderLogger` + `Interceptor` 链 + `LogData` 对象池，属过度设计。v1 只保留 `Appender` 一层扇出，级别过滤在门面处完成。
 

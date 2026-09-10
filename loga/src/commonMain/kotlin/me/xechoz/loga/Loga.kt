@@ -1,6 +1,7 @@
 package me.xechoz.loga
 
 import me.xechoz.loga.appender.Appender
+import me.xechoz.loga.appender.ConsoleAppender
 import me.xechoz.loga.appender.FileAppender
 import me.xechoz.loga.formatter.Formatter
 
@@ -32,7 +33,9 @@ object Loga {
         this.config = config
         this.formatter = config.formatter
         this.level = config.level
-        this.appenders = listOf(FileAppender(buffer)) + config.appenders
+        val extraAppenders = config.appenders
+            ?: if (config.isDebug) listOf(ConsoleAppender()) else emptyList()
+        this.appenders = listOf(FileAppender(buffer)) + extraAppenders
 
         if (config.logUncaughtExceptions) {
             uninstallCrashHook = installUncaughtExceptionHook { message ->

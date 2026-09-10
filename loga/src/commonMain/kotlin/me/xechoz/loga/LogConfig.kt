@@ -12,10 +12,18 @@ data class LogConfig(
     val formatter: Formatter = DefaultFormatter,
     val retentionDays: Int = 7,
     /**
-     * Extra appenders appended after the built-in file appender.
-     * File logging is always enabled; pass [ConsoleAppender] to also print to the platform console.
+     * Controls the default appenders when [appenders] is `null`. When `true` the platform
+     * console is enabled in addition to the built-in file appender; when `false` only the
+     * file appender is used. Callers should pass their build's debug flag (e.g. Android
+     * `BuildConfig.DEBUG`) so release builds stay file-only.
      */
-    val appenders: List<Appender> = listOf(ConsoleAppender()),
+    val isDebug: Boolean = true,
+    /**
+     * Extra appenders appended after the built-in file appender.
+     * File logging is always enabled. When `null`, defaults to `[ConsoleAppender]` if
+     * [isDebug] is `true`, otherwise `emptyList()`. Pass an explicit list to override.
+     */
+    val appenders: List<Appender>? = null,
     /**
      * When enabled, [Loga.init] installs a platform uncaught-exception handler that logs the
      * crash at [Level.ERROR] and flushes before the process dies. [Loga.release] restores the

@@ -40,7 +40,8 @@ LogConfig(
     level = Level.DEBUG,          // minimum level
     formatter = DefaultFormatter, // "L/TAG: msg\n"
     retentionDays = 7,            // delete files older than this
-    appenders = null,             // defaults to [FileAppender, ConsoleAppender]
+    isDebug = true,               // true: file + console; false: file only
+    appenders = null,             // null = derived from isDebug; pass a list to override
 )
 ```
 

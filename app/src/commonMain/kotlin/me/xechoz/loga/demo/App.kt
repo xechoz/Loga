@@ -49,6 +49,7 @@ fun App() {
         val presets = remember {
             listOf(
                 Preset("Default", "LogConfig() 默认配置") { LogConfig() },
+                Preset("Release", "isDebug = false，仅文件输出") { LogConfig(isDebug = false) },
                 Preset("WARN only", "level = Level.WARN") { LogConfig(level = Level.WARN) },
                 Preset("Disable", "level = Level.DISABLE 全静默") { LogConfig(level = Level.DISABLE) },
                 Preset("Formatter", "自定义 Formatter，无级别前缀") {

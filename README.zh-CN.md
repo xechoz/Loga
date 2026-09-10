@@ -37,7 +37,8 @@ LogConfig(
     level = Level.DEBUG,          // 最低日志级别
     formatter = DefaultFormatter, // "L/TAG: msg\n"
     retentionDays = 7,            // 删除早于该天数的文件
-    appenders = null,             // 默认为 [FileAppender, ConsoleAppender]
+    isDebug = true,               // true: 文件 + 控制台；false: 仅文件
+    appenders = null,             // null 时由 isDebug 决定；传列表可覆盖
 )
 ```
 
