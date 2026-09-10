@@ -9,6 +9,7 @@ object Loga {
     private var appenders: List<Appender> = emptyList()
     private var formatter: Formatter = LogConfig().formatter
     private var level: Int = Level.DEBUG
+    private var uninstallCrashHook: (() -> Unit)? = null
 
     fun init(config: LogConfig) {
         release()
@@ -32,6 +33,13 @@ object Loga {
         this.formatter = config.formatter
         this.level = config.level
         this.appenders = listOf(FileAppender(buffer)) + config.appenders
+
+        if (config.logUncaughtExceptions) {
+            uninstallCrashHook = installUncaughtExceptionHook { message ->
+                e("Crash", message)
+                flush()
+            }
+        }
     }
 
     fun v(tag: String, msg: String) = println(Level.VERBOSE, tag, msg)
@@ -59,6 +67,8 @@ object Loga {
     }
 
     fun release() {
+        uninstallCrashHook?.invoke()
+        uninstallCrashHook = null
         for (appender in appenders) {
             appender.release()
         }

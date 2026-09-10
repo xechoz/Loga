@@ -11,7 +11,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setDemoContext(this)
         Loga.init(this)
-        installCrashLogger()
         setContent { App() }
     }
 }

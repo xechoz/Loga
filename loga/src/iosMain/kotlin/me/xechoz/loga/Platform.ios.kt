@@ -18,3 +18,5 @@ actual fun defaultLogDirectory(): String {
 actual fun consoleLog(level: Int, tag: String, line: String) {
     NSLog("%@", line.trimEnd('\n'))
 }
+
+actual fun installUncaughtExceptionHook(onUncaught: (message: String) -> Unit): () -> Unit = {}

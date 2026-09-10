@@ -29,3 +29,13 @@ expect fun defaultLogDirectory(): String
  * any prefix of its own.
  */
 expect fun consoleLog(level: Int, tag: String, line: String)
+
+/**
+ * Installs a process-wide uncaught-exception handler that invokes [onUncaught]
+ * with a pre-formatted crash description before delegating to the previously
+ * installed handler.
+ *
+ * Returns a function that uninstalls the hook and restores the previous handler.
+ * On platforms without such a mechanism (iOS) this is a no-op.
+ */
+expect fun installUncaughtExceptionHook(onUncaught: (message: String) -> Unit): () -> Unit

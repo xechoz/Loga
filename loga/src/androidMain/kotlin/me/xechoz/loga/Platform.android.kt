@@ -28,3 +28,12 @@ fun Loga.init(context: Context, config: LogConfig = LogConfig()) {
     appContext = context.applicationContext
     init(config)
 }
+
+actual fun installUncaughtExceptionHook(onUncaught: (String) -> Unit): () -> Unit {
+    val previous = Thread.getDefaultUncaughtExceptionHandler()
+    Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+        onUncaught("Uncaught on ${thread.name}: ${throwable.stackTraceToString()}")
+        previous?.uncaughtException(thread, throwable)
+    }
+    return { Thread.setDefaultUncaughtExceptionHandler(previous) }
+}
