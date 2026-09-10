@@ -88,3 +88,13 @@ ANDROID_HOME=$PWD/.android-sdk ./gradlew :loga:assemble
 ```
 
 `.android-sdk/` is git-ignored.
+
+## References
+
+- [Log4a](https://github.com/pqpo/Log4a) — mmap linear buffer, async flush and
+  startup recovery; the engine design this project draws from (Apache 2.0).
+- [Tencent mars/xlog](https://github.com/Tencent/mars) — the most mature mmap
+  logging solution; reference for future compression, encryption and
+  multi-process support.
+- [Meituan Logan](https://github.com/Meituan-Dianping/Logan) — reference for its
+  streaming protocol and single-writer thread model.
