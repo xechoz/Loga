@@ -11,7 +11,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -29,134 +28,133 @@ import me.xechoz.loga.Loga
 import me.xechoz.loga.LogConfig
 import me.xechoz.loga.appender.ConsoleAppender
 import me.xechoz.loga.formatter.Formatter
+import org.jetbrains.compose.ui.tooling.preview.Preview
 
-private data class Preset(
-    val name: String,
-    val description: String,
-    val build: (InMemoryAppender) -> LogConfig,
-)
+private const val TAG = "demo"
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun App() {
     MaterialTheme {
         val memoryAppender = remember { InMemoryAppender() }
-        var selectedPreset by remember { mutableStateOf(0) }
-        var tag by remember { mutableStateOf("Demo") }
-        var message by remember { mutableStateOf("hello loga") }
-        var activeConfig by remember { mutableStateOf("Default") }
+        val logDirectory = remember { demoLogDirectory() }
 
-        val presets = remember {
-            listOf(
-                Preset("Default", "LogConfig() 默认配置") { LogConfig() },
-                Preset("Release", "isDebug = false，仅文件输出") { LogConfig(isDebug = false) },
-                Preset("WARN only", "level = Level.WARN") { LogConfig(level = Level.WARN) },
-                Preset("Disable", "level = Level.DISABLE 全静默") { LogConfig(level = Level.DISABLE) },
-                Preset("Formatter", "自定义 Formatter，无级别前缀") {
-                    LogConfig(formatter = Formatter { _, t, m -> "[$t] $m\n" })
-                },
-                Preset("Appender", "文件 + InMemoryAppender（追加）") {
-                    LogConfig(appenders = listOf(memoryAppender))
-                },
-                Preset("Console+Mem", "ConsoleAppender + InMemoryAppender") {
-                    LogConfig(appenders = listOf(ConsoleAppender(), memoryAppender))
-                },
-                Preset("Small buffer", "bufferSize = 4KB，频繁刷盘") {
-                    LogConfig(bufferSize = 4 * 1024)
-                },
-                Preset("Custom dir", "logDirectory = demoLogDirectory()") {
-                    LogConfig(logDirectory = demoLogDirectory())
-                },
-            )
+        remember {
+            LogConfig(
+                logDirectory = logDirectory,
+                bufferSize = 400 * 1024,
+                level = Level.DEBUG,
+                formatter = Formatter { level, tag, message -> "$level/$tag: $message\n" },
+                retentionDays = 7,
+                isDebug = true,
+                appenders = listOf(ConsoleAppender(), memoryAppender),
+                logUncaughtExceptions = true,
+            ).also { config ->
+                Loga.init(config)
+                Loga.i(TAG, "$config")
+            }
         }
 
-        fun applyPreset(index: Int) {
-            selectedPreset = index
-            val preset = presets[index]
-            Loga.init(preset.build(memoryAppender))
-            activeConfig = preset.name
-        }
+        AppContent(memoryAppender = memoryAppender, logDirectory = logDirectory)
+    }
+}
 
-        Scaffold(
-            topBar = { TopAppBar(title = { Text("loga demo") }) },
-        ) { padding ->
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                item { Text("配置预设（点击即 Loga.init 重配）", style = MaterialTheme.typography.titleMedium) }
-                presets.forEachIndexed { index, preset ->
-                    item(key = "preset-$index") {
-                        FilterChip(
-                            selected = selectedPreset == index,
-                            onClick = { applyPreset(index) },
-                            label = { Text("${preset.name} — ${preset.description}") },
-                        )
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AppContent(memoryAppender: InMemoryAppender, logDirectory: String) {
+    var tag by remember { mutableStateOf("Demo") }
+    var message by remember { mutableStateOf("hello loga") }
+
+    Scaffold(
+        topBar = { TopAppBar(title = { Text("loga demo") }) },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                Card {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("LogConfig 示例（所有参数）", style = MaterialTheme.typography.titleMedium)
+                        Text("logDirectory = $logDirectory", style = MaterialTheme.typography.bodySmall)
+                        Text("bufferSize = 400 * 1024", style = MaterialTheme.typography.bodySmall)
+                        Text("level = Level.DEBUG", style = MaterialTheme.typography.bodySmall)
+                        Text("formatter = 自定义 \"\$level/\$tag: \$message\"", style = MaterialTheme.typography.bodySmall)
+                        Text("retentionDays = 7", style = MaterialTheme.typography.bodySmall)
+                        Text("isDebug = true", style = MaterialTheme.typography.bodySmall)
+                        Text("appenders = [ConsoleAppender, InMemoryAppender]", style = MaterialTheme.typography.bodySmall)
+                        Text("logUncaughtExceptions = true", style = MaterialTheme.typography.bodySmall)
                     }
                 }
+            }
 
-                item {
-                    Card {
-                        Column(Modifier.padding(12.dp)) {
-                            Text("当前配置: $activeConfig", style = MaterialTheme.typography.bodyMedium)
-                            Text("日志目录: ${demoLogDirectory()}", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+            item {
+                OutlinedTextField(
+                    value = tag,
+                    onValueChange = { tag = it },
+                    label = { Text("tag") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            item {
+                OutlinedTextField(
+                    value = message,
+                    onValueChange = { message = it },
+                    label = { Text("message") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { Loga.v(tag, message) }) { Text("V") }
+                    Button(onClick = { Loga.d(tag, message) }) { Text("D") }
+                    Button(onClick = { Loga.i(tag, message) }) { Text("I") }
+                    Button(onClick = { Loga.w(tag, message) }) { Text("W") }
+                    Button(onClick = { Loga.e(tag, message) }) { Text("E") }
                 }
+            }
 
-                item {
-                    OutlinedTextField(
-                        value = tag,
-                        onValueChange = { tag = it },
-                        label = { Text("tag") },
-                        modifier = Modifier.fillMaxWidth(),
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { crashInBackgroundThread() }) { Text("Crash (bg)") }
+                        Button(onClick = { crashInMainThread() }) { Text("Crash (main)") }
+                    }
+                    Text(
+                        "后台线程崩溃进程不退出；主线程崩溃会终止进程（Android 上即闪退），" +
+                            "重启后可在日志目录看到 crash 落盘。",
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                item {
-                    OutlinedTextField(
-                        value = message,
-                        onValueChange = { message = it },
-                        label = { Text("message") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+            }
 
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { Loga.v(tag, message) }) { Text("V") }
-                        Button(onClick = { Loga.d(tag, message) }) { Text("D") }
-                        Button(onClick = { Loga.i(tag, message) }) { Text("I") }
-                        Button(onClick = { Loga.w(tag, message) }) { Text("W") }
-                        Button(onClick = { Loga.e(tag, message) }) { Text("E") }
-                    }
-                }
-
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { repeat(10_000) { Loga.i(tag, "benchmark #$it") } }) {
-                            Text("写 10000 条")
-                        }
-                        Button(onClick = { Loga.flush() }) { Text("Flush") }
-                    }
-                }
-
-                if (selectedPreset == 4 || selectedPreset == 5) {
-                    item {
-                        Text(
-                            "InMemoryAppender 收集（最近 ${memoryAppender.lines.size} 行）",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                    }
-                    items(memoryAppender.lines) { line ->
-                        Text(line, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
+            item {
+                Text(
+                    "InMemoryAppender 收集（最近 ${memoryAppender.lines.size} 行）",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+            items(memoryAppender.lines) { line ->
+                Text(line, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
 }
 
-
+@Preview(showBackground = true)
+@Composable
+internal fun AppPreview() {
+    MaterialTheme {
+        val memoryAppender = remember {
+            InMemoryAppender().apply {
+                append(Level.INFO, "Demo", "I/Demo: hello loga")
+                append(Level.WARN, "Demo", "W/Demo: something looks off")
+                append(Level.ERROR, "Demo", "E/Demo: boom")
+            }
+        }
+        AppContent(memoryAppender = memoryAppender, logDirectory = "/tmp/loga-demo")
+    }
+}

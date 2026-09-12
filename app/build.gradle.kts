@@ -30,12 +30,16 @@ kotlin {
             implementation(compose.foundation)
             implementation(compose.material3)
             implementation(compose.ui)
+            implementation(compose.components.uiToolingPreview)
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
         }
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
         }
     }
 }
@@ -56,6 +60,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    debugImplementation("org.jetbrains.compose.ui:ui-tooling:${libs.versions.compose.get()}")
 }
 
 compose.desktop {
