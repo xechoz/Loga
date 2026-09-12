@@ -4,6 +4,12 @@ import me.xechoz.loga.appender.Appender
 import me.xechoz.loga.appender.ConsoleAppender
 import me.xechoz.loga.appender.FileAppender
 import me.xechoz.loga.formatter.Formatter
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 object Loga {
     private var config: LogConfig? = null
@@ -11,6 +17,7 @@ object Loga {
     private var formatter: Formatter = LogConfig().formatter
     private var level: Int = Level.DEBUG
     private var uninstallCrashHook: (() -> Unit)? = null
+    private var flushTimer: Job? = null
 
     fun init(config: LogConfig) {
         release()
@@ -36,6 +43,15 @@ object Loga {
         val extraAppenders = config.appenders
             ?: if (config.isDebug) listOf(ConsoleAppender()) else emptyList()
         this.appenders = listOf(FileAppender(buffer)) + extraAppenders
+
+        if (config.flushIntervalMillis > 0) {
+            flushTimer = CoroutineScope(Dispatchers.Default).launch {
+                while (isActive) {
+                    delay(config.flushIntervalMillis)
+                    buffer.flushAsync()
+                }
+            }
+        }
 
         if (config.logUncaughtExceptions) {
             uninstallCrashHook = installUncaughtExceptionHook { message ->
@@ -72,6 +88,8 @@ object Loga {
     fun release() {
         uninstallCrashHook?.invoke()
         uninstallCrashHook = null
+        flushTimer?.cancel()
+        flushTimer = null
         for (appender in appenders) {
             appender.release()
         }

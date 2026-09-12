@@ -12,6 +12,12 @@ data class LogConfig(
     val formatter: Formatter = DefaultFormatter,
     val retentionDays: Int = 7,
     /**
+     * Interval in milliseconds at which the buffer is flushed to the daily log file in the
+     * background. This keeps recent logs readable in the `.txt` file instead of lingering in
+     * the mmap buffer. Set to `0` to disable periodic flushing.
+     */
+    val flushIntervalMillis: Long = 5_000,
+    /**
      * Controls the default appenders when [appenders] is `null`. When `true` the platform
      * console is enabled in addition to the built-in file appender; when `false` only the
      * file appender is used. Callers should pass their build's debug flag (e.g. Android

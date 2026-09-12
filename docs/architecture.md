@@ -111,6 +111,7 @@ data class LogConfig(
     val level: Int = Level.DEBUG,            // minimum level
     val formatter: Formatter = DefaultFormatter,
     val retentionDays: Int = 7,              // log retention in days
+    val flushIntervalMillis: Long = 5_000,   // background flush interval; 0 disables
     val isDebug: Boolean = true,             // true: file + console; false: file only
     val appenders: List<Appender>? = null,   // null = derived from isDebug, appended after the file appender
     val logUncaughtExceptions: Boolean = true, // install a crash hook that logs and flushes

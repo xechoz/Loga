@@ -8,7 +8,13 @@ import me.xechoz.loga.LogConfig
 fun main() {
     Loga.init(LogConfig())
     application {
-        Window(onCloseRequest = ::exitApplication, title = "loga demo") {
+        Window(
+            onCloseRequest = {
+                Loga.flush()
+                exitApplication()
+            },
+            title = "loga demo",
+        ) {
             App()
         }
     }

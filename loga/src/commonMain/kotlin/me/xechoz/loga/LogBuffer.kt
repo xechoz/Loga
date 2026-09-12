@@ -115,6 +115,17 @@ internal class LogBuffer(
         asyncFlush.await()
     }
 
+    /**
+     * Submits the current buffer contents for writing without waiting for the
+     * background worker to finish. Used by the periodic flush timer so it never
+     * blocks.
+     */
+    fun flushAsync() {
+        synchronized(lock) {
+            flushLocked()
+        }
+    }
+
     private fun flushLocked() {
         val buffer = mapped ?: return
         if (logLen <= 0) return

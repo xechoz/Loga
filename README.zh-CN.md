@@ -40,6 +40,7 @@ LogConfig(
     level = Level.DEBUG,          // 最低日志级别
     formatter = DefaultFormatter, // "L/TAG: msg\n"
     retentionDays = 7,            // 删除早于该天数的文件
+    flushIntervalMillis = 5_000,  // 后台定时刷盘间隔；0 表示关闭
     isDebug = true,               // true: 文件 + 控制台；false: 仅文件
     appenders = null,             // null 时由 isDebug 决定；传列表可覆盖
     logUncaughtExceptions = true, // 进程崩溃前记录并刷盘未捕获异常

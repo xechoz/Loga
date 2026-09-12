@@ -110,6 +110,7 @@ data class LogConfig(
     val level: Int = Level.DEBUG,            // 最低输出级别
     val formatter: Formatter = DefaultFormatter,
     val retentionDays: Int = 7,              // 日志保留天数，可配置
+    val flushIntervalMillis: Long = 5_000,   // 后台定时刷盘间隔；0 表示关闭
     val isDebug: Boolean = true,             // true: 文件 + 控制台；false: 仅文件
     val appenders: List<Appender>? = null,   // null 时由 isDebug 决定，追加在文件 appender 之后
     val logUncaughtExceptions: Boolean = true, // 安装崩溃钩子，记录并刷盘
