@@ -42,6 +42,7 @@ LogConfig(
     retentionDays = 7,            // delete files older than this
     isDebug = true,               // true: file + console; false: file only
     appenders = null,             // null = derived from isDebug; pass a list to override
+    logUncaughtExceptions = true, // log and flush uncaught exceptions before the process dies
 )
 ```
 

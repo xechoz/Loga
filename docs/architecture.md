@@ -1,80 +1,84 @@
-# loga 架构设计
+# loga Architecture
 
-> Kotlin Multiplatform mmap 日志库。对外 API 简单，保持适度扩展，不过度设计。
-> 包名 `me.xechoz.loga`，库名 `loga`。
-> 目标平台：Android、JVM (desktop)、iOS。
+[English](architecture.md) | [中文](architecture.zh-CN.md)
 
----
-
-## 1. 目标与原则
-
-### 目标
-- **API 简单**：一行 `Loga.i("tag", "msg")` 即可用；初始化只需 `Loga.init(config)`。
-- **适度扩展**：只保留真正需要的扩展点（`Formatter`、`Appender`），不预设用不到的抽象。
-- **不过度设计**：v1 只做核心能力，砍掉参考实现中的冗余抽象。
-- **跨平台**：核心引擎全部在 `commonMain`，平台差异收敛为少量 `expect/actual`。
-
-### v1 范围
-mmap 缓冲 + 异步刷盘 + 按天切文件 + 平台控制台输出 + 日志保留清理（默认 7 天，可配置）。
-
-### 非目标（v1 明确不做）
-压缩、加密、多进程、无锁、对象池、`ByteBuffer` 直传优化、拦截器链、Windows 目标。
+> A Kotlin Multiplatform mmap logging library. The public API stays small, with
+> just enough extension points and no over-engineering.
+> Package `me.xechoz.loga`, library name `loga`.
+> Targets: Android, JVM (desktop), iOS.
 
 ---
 
-## 2. 核心概念
+## 1. Goals and Principles
 
-| 概念 | 定义 | 为什么这样设计 |
+### Goals
+- **Simple API**: one line `Loga.i("tag", "msg")` is enough; initialization is just `Loga.init(config)`.
+- **Moderate extensibility**: keep only the extension points that are actually needed (`Formatter`, `Appender`); do not predefine abstractions nobody uses.
+- **No over-engineering**: v1 ships only the core capabilities and drops the redundant abstractions found in the reference implementations.
+- **Cross-platform**: the whole engine lives in `commonMain`; platform differences collapse into a handful of `expect/actual` declarations.
+
+### v1 Scope
+mmap buffer + asynchronous flush + daily file rotation + platform console output + log retention cleanup (7 days by default, configurable).
+
+### Non-goals (explicitly out of scope for v1)
+Compression, encryption, multi-process, lock-free, object pools, direct `ByteBuffer` optimization, interceptor chains, Windows target.
+
+---
+
+## 2. Core Concepts
+
+| Concept | Definition | Why it is designed this way |
 |---|---|---|
-| **MMap 缓冲区** | 一个映射到文件的固定大小内存区，日志先写入这里 | 写入即写内存，避免每次 `write` 的系统调用与拷贝 |
-| **持久化 Header** | 缓冲区文件头部的一段元数据：`magic \| logLen \| logPathLen \| logPath` | 进程被杀后，下次启动能知道「有多少脏数据、该写往哪个日志文件」 |
-| **线性缓冲** | 数据从 `dataStart + logLen` 顺序追加，写满后整体刷盘并清空 | 比环形缓冲简单，无回绕边界问题；参考实现即此模型 |
-| **异步刷盘** | 写日志线程只做 memcpy 快照，落盘交给后台单 worker 线程 | 不阻塞调用方 |
-| **脏尾部（dirty tail）** | 上次进程被杀时残留在缓冲区、尚未落盘的数据 | 启动时通过 `flushDirty` 恢复，实现「强杀不丢」 |
-| **日志文件轮转** | 日志按天写入 `yyyy_MM_dd.txt`，跨天自动切换 | 便于按日期查找与清理 |
+| **MMap buffer** | A fixed-size memory region mapped to a file; log lines are written here first | Writing is a memory write, avoiding a `write` syscall and copy per line |
+| **Persistent header** | A metadata block at the start of the buffer file: `magic \| logLen \| logPathLen \| logPath` | After the process is killed, the next start knows "how many dirty bytes exist and which log file they belong to" |
+| **Linear buffer** | Data is appended sequentially at `dataStart + logLen`; when full it is flushed and cleared | Simpler than a ring buffer, no wrap-around edge cases; the reference implementation uses this model |
+| **Async flush** | The logging thread only takes a memcpy snapshot; writing to disk is delegated to a single background worker | Never blocks the caller |
+| **Dirty tail** | Data left in the buffer by a previous process that was killed before it was flushed | Recovered on startup via `recoverDirtyTail`, which is what makes "kill -9 does not lose logs" work |
+| **Log file rotation** | Logs are written to `yyyy_MM_dd.txt` and switch automatically across days | Easy to find and clean up by date |
 
-### 持久性边界（重要）
-- **保证**：进程被强杀（kill -9）不丢日志——页仍由内核管理，会回写磁盘。
-- **不保证**：断电不丢——取决于内核脏页回写时机，除非显式 `msync`/`force()`。
+### Durability boundary (important)
+- **Guaranteed**: a process kill (`kill -9`) does not lose logs — the pages are still managed by the kernel and will be written back to disk.
+- **Not guaranteed**: power loss, unless `msync`/`force()` is called explicitly.
 
 ---
 
-## 3. 分层架构
+## 3. Layered Architecture
 
 ```
 ┌──────────────────────────────────────────────────┐
-│  Kotlin API 层（commonMain）                       │
-│  Log（门面）  LogConfig  Formatter  Appender       │
-│  ├─ FileAppender ──┐                               │
-│  └─ ConsoleAppender│（平台控制台输出）             │
+│  Kotlin API layer (commonMain)                    │
+│  Loga (facade)  LogConfig  Formatter  Appender    │
+│  ├─ FileAppender ──┐                              │
+│  └─ ConsoleAppender│ (platform console output)    │
 └────────────────────┼──────────────────────────────┘
                      │
 ┌────────────────────▼──────────────────────────────┐
-│  引擎层（commonMain，纯 Kotlin）                    │
-│  LogBuffer（线性缓冲 + Header + 切文件）           │
-│  AsyncFlush（单 worker 协程 + 任务队列）           │
-│  LogFileManager（按天轮转 + retention 清理）       │
+│  Engine layer (commonMain, pure Kotlin)           │
+│  LogBuffer (linear buffer + header + rotation)    │
+│  AsyncFlush (single worker + task queue)          │
+│  Worker (common coroutine worker)                 │
+│  LogFileManager (daily rotation + retention)      │
 └────────────────────┬──────────────────────────────┘
                      │ expect/actual
 ┌────────────────────▼──────────────────────────────┐
-│  平台适配层                                        │
-│  MappedBuffer  默认目录  控制台输出                │
-│  Android/JVM: MappedByteBuffer                     │
-│  iOS: platform.posix.mmap                          │
+│  Platform adaptation layer                        │
+│  MappedBuffer  default directory  console output  │
+│  Android/JVM: MappedByteBuffer                    │
+│  iOS: platform.posix.mmap                         │
 └────────────────────┬──────────────────────────────┘
                      │ mmap / write
 ┌────────────────────▼──────────────────────────────┐
-│  文件系统                                          │
-│  .logCache（mmap 缓冲文件）                        │
-│  yyyy_MM_dd.txt（日志文件）                        │
+│  File system                                      │
+│  .logCache (mmap buffer file)                     │
+│  yyyy_MM_dd.txt (log files)                       │
 └───────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 4. 对外 API 与扩展点
+## 4. Public API and Extension Points
 
-### 4.1 门面 `Loga`（commonMain）
+### 4.1 Facade `Loga` (commonMain)
 
 ```kotlin
 object Loga {
@@ -84,32 +88,36 @@ object Loga {
     fun i(tag: String, msg: String)
     fun w(tag: String, msg: String)
     fun e(tag: String, msg: String)
-    fun flush()      // 立即把缓冲刷入日志文件
-    fun release()    // 刷盘并释放资源
+    fun println(level: Int, tag: String, msg: String)  // generic entry point
+    fun flush()      // flush the buffer into the log file immediately
+    fun release()    // flush and release resources
 }
 ```
 
-Android 便捷入口（`androidMain`）：
+`init` calls `release()` first, so re-initializing is safe.
+
+Android convenience entry point (`androidMain`):
 
 ```kotlin
 fun Loga.init(context: Context, config: LogConfig = LogConfig())
 ```
 
-### 4.2 配置 `LogConfig`
+### 4.2 Configuration `LogConfig`
 
 ```kotlin
 data class LogConfig(
-    val logDirectory: String? = null,        // 默认由平台 actual 解析
-    val bufferSize: Int = 400 * 1024,        // mmap 缓冲大小
-    val level: Int = Level.DEBUG,            // 最低输出级别
+    val logDirectory: String? = null,        // resolved by the platform actual when null
+    val bufferSize: Int = 400 * 1024,        // mmap buffer size
+    val level: Int = Level.DEBUG,            // minimum level
     val formatter: Formatter = DefaultFormatter,
-    val retentionDays: Int = 7,              // 日志保留天数，可配置
-    val isDebug: Boolean = true,             // true: 文件 + 控制台；false: 仅文件
-    val appenders: List<Appender>? = null,   // null 时由 isDebug 决定，追加在文件 appender 之后
+    val retentionDays: Int = 7,              // log retention in days
+    val isDebug: Boolean = true,             // true: file + console; false: file only
+    val appenders: List<Appender>? = null,   // null = derived from isDebug, appended after the file appender
+    val logUncaughtExceptions: Boolean = true, // install a crash hook that logs and flushes
 )
 ```
 
-### 4.3 扩展点（仅两个）
+### 4.3 Extension Points (only two)
 
 ```kotlin
 fun interface Formatter {
@@ -117,23 +125,23 @@ fun interface Formatter {
 }
 
 interface Appender {
-    fun append(level: Int, tag: String, msg: String)
+    fun append(level: Int, tag: String, line: String)  // line is already formatted
     fun flush()
     fun release()
 }
 ```
 
-- **`Formatter`**：自定义日志行格式，默认输出 `L/TAG: msg\n`。
-- **`Appender`**：自定义输出目标。文件落盘（`FileAppender`）始终启用，`appenders` 中的 appender 追加在其后；`appenders = null` 时由 `isDebug` 决定：`true` 追加 `ConsoleAppender`（平台控制台），`false` 仅文件。传 `emptyList()` 可显式关闭控制台输出。
+- **`Formatter`**: customizes the log line format; the default emits `L/TAG: msg\n`.
+- **`Appender`**: customizes output targets. File logging (`FileAppender`) is always enabled, and appenders in `appenders` are appended after it. When `appenders = null`, `isDebug` decides: `true` appends `ConsoleAppender` (platform console), `false` keeps file only. Passing `emptyList()` explicitly disables console output.
 
-> 设计取舍：参考实现 Log4a 有 `Logger` + `AppenderLogger` + `Interceptor` 链 + `LogData` 对象池，属过度设计。v1 只保留 `Appender` 一层扇出，级别过滤在门面处完成。
+> Design trade-off: the reference implementation Log4a has a `Logger` + `AppenderLogger` + `Interceptor` chain + `LogData` object pool, which is over-engineered. v1 keeps a single `Appender` fan-out layer, and level filtering happens in the facade.
 
 ---
 
-## 5. 平台适配点（expect/actual）
+## 5. Platform Adaptation Points (expect/actual)
 
 ```kotlin
-// commonMain
+// commonMain, Platform.kt
 expect class MappedBuffer {
     val size: Long
     fun put(position: Long, src: ByteArray, offset: Int, length: Int)
@@ -142,148 +150,153 @@ expect class MappedBuffer {
     fun close()
 }
 
+expect fun openMappedBuffer(path: String, size: Long): MappedBuffer
 expect fun defaultLogDirectory(): String
-expect fun consoleLog(level: Int, tag: String, msg: String)
+expect fun consoleLog(level: Int, tag: String, line: String)
+expect fun installUncaughtExceptionHook(onUncaught: (message: String) -> Unit): () -> Unit
 ```
 
-| 抽象 | Android | JVM | iOS |
+| Abstraction | Android | JVM | iOS |
 |---|---|---|---|
 | `MappedBuffer` | MappedByteBuffer | MappedByteBuffer | `platform.posix.mmap` |
-| `defaultLogDirectory` | `context.filesDir/logs` | `user.home/logs` | `NSDocumentDirectory` |
-| `consoleLog` | `android.util.Log` | `println` | `NSLog` / `os_log` |
+| `defaultLogDirectory` | `getExternalFilesDir("logs")/logs` (falls back to `filesDir`) | `user.home/logs` | `NSDocumentDirectory/logs` |
+| `consoleLog` | `android.util.Log` | `println` | `NSLog` |
+| `installUncaughtExceptionHook` | `Thread.setDefaultUncaughtExceptionHandler` | `Thread.setDefaultUncaughtExceptionHandler` | no-op |
 
-**Kotlin/Native 指针安全**：mmap 返回 `CPointer<ByteVar>`，写入在锁内 `memcpy`；刷盘时把数据快照拷贝进 `ByteArray` 再交给后台线程，避免裸指针跨线程。
+**Kotlin/Native pointer safety**: mmap returns a `CPointer<ByteVar>`. Writes `memcpy` inside the lock; when flushing, the data snapshot is copied into a `ByteArray` before being handed to the background thread, so raw pointers never cross threads.
 
 ---
 
-## 6. 核心流程
+## 6. Core Flows
 
-### 6.1 写入流程
+### 6.1 Write flow
 
 ```
 Loga.i(tag, msg)
-  → 级别过滤（level < config.level 直接返回）
+  → level filter (level < config.level returns immediately)
   → formatter.format(level, tag, msg)
-  → 遍历 appenders
+  → iterate appenders
       ├─ ConsoleAppender → consoleLog(...)
       └─ FileAppender → LogBuffer.append
-            → 检查日期边界：now >= nextSwitchMillis ? 切文件 : 继续
-            → 若缓冲剩余空间不足 → 先 asyncFlush
-            → 若单行 > 缓冲总容量 → 截断 + 告警
-            → memcpy 到 dataStart + logLen，logLen += len
+            → check the day boundary: now >= nextSwitchMillis ? rotate : continue
+            → if the buffer cannot fit the line → flush first
+            → if a single line > total capacity → truncate + warn
+            → memcpy to dataStart + logLen, logLen += len
 ```
 
-### 6.2 刷盘流程（异步）
+### 6.2 Flush flow (asynchronous)
 
 ```
-asyncFlush()
-  → logLen == 0 ? 直接返回
-  → 打开/复用日志文件句柄，构造 FlushBuffer
-  → 把缓冲数据区拷贝进 FlushBuffer 的 ByteArray
-  → clear()：数据区清零，logLen = 0
-  → 提交任务到 AsyncFlush 队列
-  → worker 协程取出任务 → write 到文件（处理 partial write / 中断）
+flushLocked()
+  → logLen == 0 ? return
+  → copy the valid region into a self-contained FlushBuffer (path + ByteArray)
+  → reset logLen = 0 and rewrite the header
+  → submit the task to the AsyncFlush queue
+  → the worker coroutine takes the task → append to the file
+
+flush()
+  → flushLocked() then asyncFlush.await()   // blocks until everything is written
 ```
 
-**关键点**：`FlushBuffer` 自包含（持有文件句柄 + 数据拷贝），因此 `LogBuffer` 被释放后后台任务仍安全。
+**Key point**: `FlushBuffer` is self-contained (it owns the target path and a data copy), so background tasks remain safe even after `LogBuffer` is released.
 
-### 6.3 启动恢复流程
-
-```
-LogBuffer.init(bufferPath, capacity, logPath)
-  → 打开/创建 buffer 文件
-  → flushDirty(bufferPath)          ← 必须在截断/重建之前！
-        读取 Header，若 logLen > 0，把脏尾部写回 logPath
-  → 预分配文件大小 + mmap（总大小 = capacity + headerSize(logPathLen)）
-  → 写入新 Header
-```
-
-**关键点**：`flushDirty` 必须在重建映射之前，否则脏数据被抹掉。
-
-### 6.4 按天切文件 + 保留清理
+### 6.3 Startup recovery flow
 
 ```
-切文件触发：
-  每次写入时比较 now >= nextSwitchMillis
-    → 是：asyncFlush 当前缓冲 → 打开新日期文件 → 重算 nextSwitchMillis
-    → 否：继续写入
-
-保留清理触发：
-  init 时 + 每次切文件时
-    → 扫描日志目录
-    → 删除文件名日期早于 (今天 - retentionDays) 的 yyyy_MM_dd.txt
+LogBuffer.init()
+  → if the buffer file exists, recover the dirty tail BEFORE rebuilding the mapping
+        recoverDirtyTail(existingSize)
+          → open the existing mapping, read the header
+          → if logLen > 0, copy the dirty bytes and submit a FlushBuffer to asyncFlush
+  → preallocate the file and mmap (total size = capacity + headerSize(logPathLen))
+  → write the new header
 ```
 
-**关键点**：用 `nextSwitchMillis` 边界比较，避免每行都做日期格式化。
+**Key point**: recovery must happen before the mapping is rebuilt, otherwise the dirty data is wiped out.
+
+### 6.4 Daily rotation + retention cleanup
+
+```
+Rotation trigger:
+  on every write, compare now >= nextSwitchMillis
+    → yes: flush the current buffer → switch to the new date file → recompute nextSwitchMillis
+    → no: keep writing
+
+Retention cleanup trigger:
+  on init + on every rotation
+    → scan the log directory
+    → delete yyyy_MM_dd.txt files whose date is older than (today - retentionDays)
+```
+
+**Key point**: the cached `nextSwitchMillis` boundary avoids formatting a date on every line.
 
 ---
 
-## 7. 数据结构
+## 7. Data Structures
 
-### 7.1 持久化 Header（v1 简化版）
+### 7.1 Persistent header (v1 simplified)
 
 ```
-偏移  字段        类型      说明
-0     magic       byte      固定 0x11，用于判断 Header 是否有效
-1     logLen      Long      缓冲区中有效数据长度（脏数据量）
-      logPathLen  Int       日志文件路径长度
-      logPath     bytes     日志文件路径（UTF-8）
+offset  field       type    notes
+0       magic       byte    fixed 0x11, used to tell whether the header is valid
+1       logLen      Long    valid data length in the buffer (dirty byte count)
+9       logPathLen  Int     log file path length
+13      logPath     bytes   log file path (UTF-8)
 ```
 
 - `headerSize(logPathLen) = 1 + 8 + 4 + logPathLen`
 - `isAvailable() = data[0] == magic`
 - `dataStart() = data + headerSize(logPathLen)`
 
-> 相比参考实现去掉了 `isCompress` 字段（v1 不做压缩）。
+> Compared with the reference implementation, the `isCompress` field is dropped (v1 does not compress).
 
-### 7.2 缓冲文件布局
+### 7.2 Buffer file layout
 
 ```
 ┌──────────────┬──────────────────────────────┐
-│  Header      │  数据区（capacity 字节）       │
-│  (动态大小)   │  ← logLen 有效 →              │
+│  Header      │  Data region (capacity bytes) │
+│  (dynamic)   │  ← logLen valid →             │
 └──────────────┴──────────────────────────────┘
-文件总大小 = capacity + headerSize(logPathLen)
+total file size = capacity + headerSize(logPathLen)
 ```
 
 ---
 
-## 8. 设计取舍
+## 8. Design Trade-offs
 
-| 取舍点 | 选择 | 理由 |
+| Trade-off | Choice | Rationale |
 |---|---|---|
-| 纯 Kotlin vs JNI/C++ | **纯 Kotlin** | KMP 下 Native 可直接调 POSIX，JVM 用 MappedByteBuffer；砍掉 NDK/CMake/JNI 全部复杂度 |
-| 线性 vs 环形缓冲 | **线性** | 实现简单、无回绕边界；写满整体刷盘，符合日志「顺序追加」语义 |
-| 互斥锁 vs 无锁 | **互斥锁** | v1 优先正确性与简单；无锁列入后续 |
-| 递归锁 vs 普通锁 | **普通锁 + 已持锁私有方法** | 参考实现用 `recursive_mutex` 是设计耦合的结果，可拆解 |
-| 写满时行为 | **先刷盘再写；行 > 容量则截断 + 告警** | 参考实现静默截断是缺陷，必须让使用者知道数据被丢弃 |
-| mmap 失败降级 | **降级到堆缓冲 + 告警** | 库不能因 mmap 失败而崩溃；但降级后无崩溃持久性，需告警 |
-| MappedByteBuffer 不可显式 unmap | **接受** | 单缓冲、进程级生命周期下无影响；`release()` = `force()` + 置空引用 |
-| 扩展点数量 | **仅 Formatter + Appender** | 砍掉 Interceptor 链、LogData 对象池、Logger/AppenderLogger 双抽象 |
-| 日期切换 | **nextSwitchMillis 边界比较** | 避免热路径上的日期格式化开销 |
-| 持久性声明 | **强杀不丢，断电不保证** | 如实说明 mmap 边界，不夸大 |
+| Pure Kotlin vs JNI/C++ | **Pure Kotlin** | Under KMP, Native can call POSIX directly and JVM uses MappedByteBuffer; this removes all NDK/CMake/JNI complexity |
+| Linear vs ring buffer | **Linear** | Simple to implement, no wrap-around edge cases; flushing the whole buffer matches the "sequential append" semantics of logs |
+| Mutex vs lock-free | **Mutex** | v1 prioritizes correctness and simplicity; lock-free is deferred |
+| Recursive vs plain lock | **Plain lock + private locked methods** | The reference implementation's `recursive_mutex` is a result of design coupling and can be decomposed |
+| Behavior when full | **Flush first, then write; truncate + warn if a line > capacity** | The reference implementation truncates silently, which is a defect; the user must know data was dropped |
+| mmap failure | **Throw** | The library does not silently degrade to a heap buffer; a failed mapping is a hard error |
+| MappedByteBuffer cannot be explicitly unmapped | **Accepted** | With a single buffer and a process-level lifetime there is no practical impact; `release()` = `force()` + drop the reference. iOS does call `munmap` |
+| Number of extension points | **Only Formatter + Appender** | Drops the interceptor chain, `LogData` object pool, and the `Logger`/`AppenderLogger` double abstraction |
+| Date switching | **`nextSwitchMillis` boundary comparison** | Avoids date formatting on the hot path |
+| Durability statement | **Survives kill, not power loss** | States the mmap boundary honestly, without exaggeration |
 
 ---
 
-## 9. 模块文件结构（后续实现对照）
+## 9. Module File Structure
 
 ```
 loga/
 ├── build.gradle.kts
 ├── src/
 │   ├── commonMain/kotlin/me/xechoz/loga/
-│   │   ├── Loga.kt                # 门面
-│   │   ├── LogConfig.kt           # 配置
-│   │   ├── Level.kt               # 级别常量
-│   │   ├── LogBuffer.kt           # 线性缓冲 + Header + 切文件
-│   │   ├── LogBufferHeader.kt     # 持久化 Header 读写
-│   │   ├── AsyncFlush.kt          # 单 worker 异步刷盘
-│   │   ├── FlushBuffer.kt         # 自包含刷盘任务
-│   │   ├── LogFileManager.kt      # 按天轮转 + retention 清理
-│   │   ├── MappedBuffer.kt        # expect 平台映射抽象
-│   │   ├── FileSystem.kt          # expect 文件操作
-│   │   ├── Worker.kt              # expect 后台 worker
-│   │   ├── Platform.kt            # expect 目录 / 控制台输出
+│   │   ├── Loga.kt                # facade
+│   │   ├── LogConfig.kt           # configuration
+│   │   ├── Level.kt               # level constants
+│   │   ├── LogBuffer.kt           # linear buffer + header + rotation
+│   │   ├── LogBufferHeader.kt     # persistent header read/write
+│   │   ├── AsyncFlush.kt          # single-worker async flush
+│   │   ├── Worker.kt              # common coroutine worker (FIFO queue)
+│   │   ├── FlushBuffer.kt         # self-contained flush task
+│   │   ├── LogFileManager.kt      # daily rotation + retention cleanup
+│   │   ├── Platform.kt            # expect: MappedBuffer / directory / console / crash hook
+│   │   ├── FileSystem.kt          # expect file operations
 │   │   ├── formatter/
 │   │   │   ├── Formatter.kt
 │   │   │   └── DefaultFormatter.kt
@@ -294,14 +307,13 @@ loga/
 │   ├── androidMain/kotlin/me/xechoz/loga/
 │   │   ├── MappedBuffer.android.kt
 │   │   ├── FileSystem.android.kt
-│   │   ├── Worker.android.kt
-│   │   └── Platform.android.kt    # 含 Loga.init(context, config)
+│   │   └── Platform.android.kt    # includes Loga.init(context, config)
 │   ├── jvmMain/kotlin/me/xechoz/loga/
 │   │   ├── MappedBuffer.jvm.kt
 │   │   ├── FileSystem.jvm.kt
-│   │   ├── Worker.jvm.kt
 │   │   └── Platform.jvm.kt
 │   └── iosMain/kotlin/me/xechoz/loga/
 │       ├── MappedBuffer.ios.kt
+│       ├── FileSystem.ios.kt
 │       └── Platform.ios.kt
 ```

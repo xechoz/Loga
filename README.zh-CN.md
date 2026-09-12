@@ -39,6 +39,7 @@ LogConfig(
     retentionDays = 7,            // 删除早于该天数的文件
     isDebug = true,               // true: 文件 + 控制台；false: 仅文件
     appenders = null,             // null 时由 isDebug 决定；传列表可覆盖
+    logUncaughtExceptions = true, // 进程崩溃前记录并刷盘未捕获异常
 )
 ```
 
@@ -49,8 +50,8 @@ LogConfig(
 
 ## 设计
 
-完整设计见 [`docs/architecture.md`](docs/architecture.md)，技术概览见
-[`docs/tech-stack.md`](docs/tech-stack.md)。
+完整设计见 [`docs/architecture.zh-CN.md`](docs/architecture.zh-CN.md)，技术概览见
+[`docs/tech-stack.zh-CN.md`](docs/tech-stack.zh-CN.md)。
 
 关键特性：
 

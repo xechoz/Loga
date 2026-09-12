@@ -1,143 +1,152 @@
-# loga 技术栈清单
+# loga Tech Stack
 
-> 目标：用 Kotlin Multiplatform + mmap 实现一个跨平台日志库。
-> 本文列出需要深入了解的技术栈，并标注 **v1 用** / **后续**，说明每项「为什么需要」。
+[English](tech-stack.md) | [中文](tech-stack.zh-CN.md)
+
+> Goal: build a cross-platform logging library with Kotlin Multiplatform + mmap.
+> This document lists the technologies worth understanding in depth, marks each
+> as **used in v1** / **later**, and explains "why it is needed".
 >
-> 参考实现：[Log4a](https://github.com/pqpo/Log4a)（Apache 2.0）、[Tencent mars/xlog](https://github.com/Tencent/mars)、[美团 Logan](https://github.com/Meituan-Dianping/Logan)。
+> Reference implementations: [Log4a](https://github.com/pqpo/Log4a) (Apache 2.0),
+> [Tencent mars/xlog](https://github.com/Tencent/mars),
+> [Meituan Logan](https://github.com/Meituan-Dianping/Logan).
 
 ---
 
-## 0. 目标平台
+## 0. Target Platforms
 
-| 平台 | Target | v1 |
+| Platform | Target | v1 |
 |---|---|---|
 | Android | `androidTarget` | ✅ |
 | JVM (desktop) | `jvm` | ✅ |
 | iOS | `iosArm64` / `iosSimulatorArm64` / `iosX64` | ✅ |
-| Windows | `mingwX64` | 后续 |
-| JS / Wasm | — | ❌ 无 mmap，明确排除 |
+| Windows | `mingwX64` | later |
+| JS / Wasm | — | ❌ no mmap, explicitly excluded |
 
 ---
 
-## 1. mmap 核心原理 —— v1 用
+## 1. mmap Fundamentals — used in v1
 
-| 技术点 | 为什么需要 |
+| Topic | Why it is needed |
 |---|---|
-| `mmap` / `FileChannel.map` | 日志写入的核心：把文件映射进进程地址空间，写入即写内存，避免每次 `write` 的系统调用与内核态拷贝 |
-| 页缓存（page cache）、缺页中断 | 理解「写内存」为何最终会落盘；首次写入触发缺页分配物理页 |
-| 文件预分配（`ftruncate` / `RandomAccessFile.setLength`） | 映射前必须先确定文件大小，否则访问越界触发 `SIGBUS` |
-| `msync` / `MappedByteBuffer.force()` | 显式把脏页写回磁盘；不调用则依赖内核回写线程 |
-| mmap vs write | mmap 少一次用户态→内核态拷贝，是性能优势的来源 |
+| `mmap` / `FileChannel.map` | The core of log writing: map a file into the process address space so writes go to memory, avoiding a `write` syscall and a kernel copy per line |
+| Page cache, page faults | Understand why "writing to memory" eventually reaches disk; the first write triggers a fault that allocates a physical page |
+| File preallocation (`ftruncate` / `RandomAccessFile.setLength`) | The file size must be fixed before mapping, otherwise an out-of-bounds access raises `SIGBUS` |
+| `msync` / `MappedByteBuffer.force()` | Explicitly write dirty pages back to disk; without it you rely on the kernel writeback thread |
+| mmap vs write | mmap saves one user→kernel copy, which is the source of its performance advantage |
 
-**必须写进文档的边界声明**：mmap 保证「进程被强杀（kill -9）不丢日志」（页仍由内核管理，会回写）；**不保证「断电不丢」**（取决于内核脏页回写时机，除非显式 `msync`/`force()`）。这是 mmap 方案的诚实边界。
+**Boundary statement that must be documented**: mmap guarantees "a process kill (`kill -9`) does not lose logs" (pages are still managed by the kernel and will be written back); it does **not** guarantee "no loss on power failure" (that depends on the kernel's dirty-page writeback timing, unless `msync`/`force()` is called). This is the honest boundary of the mmap approach.
 
 ---
 
-## 2. 线性缓冲与并发控制 —— v1 用
+## 2. Linear Buffer and Concurrency Control — used in v1
 
-| 技术点 | 为什么需要 |
+| Topic | Why it is needed |
 |---|---|
-| 线性缓冲（append 到 `dataStart + logLen`） | 参考实现 Log4a 用的是**线性缓冲而非环形缓冲**：顺序追加，写满后整体刷盘并清空。实现简单、无回绕边界问题 |
-| 写满策略 | 行放不下 → 先刷盘再写；行 > 缓冲总容量 → 截断并告警（参考实现此处静默截断，是缺陷） |
-| `kotlinx.coroutines.sync.Mutex` | 保护缓冲的读写指针；v1 用互斥锁即可，不引入无锁 |
-| 非递归锁拆分 | 参考实现用 `recursive_mutex`（因 `changeLogPath` 持锁内再调 `asyncFlush`）。新库把内部实现拆成「已持锁私有方法」，用普通锁 |
-| 内存屏障 / 原子操作 | **后续**：无锁化时才需要 |
+| Linear buffer (append at `dataStart + logLen`) | The reference implementation Log4a uses a **linear buffer rather than a ring buffer**: sequential append, flush and clear when full. Simple to implement, no wrap-around edge cases |
+| Full-buffer policy | A line that does not fit → flush first, then write; a line larger than the whole buffer → truncate and warn (the reference implementation truncates silently, which is a defect) |
+| `kotlinx.atomicfu.locks.synchronized` | Protects the buffer's read/write pointers; v1 uses a plain lock and does not introduce lock-free code |
+| Non-recursive lock decomposition | The reference implementation uses `recursive_mutex` (because `changeLogPath` calls `asyncFlush` while holding the lock). The new library splits the internals into "private methods that assume the lock is held" and uses a plain lock |
+| Memory barriers / atomics | **Later**: only needed when going lock-free |
 
 ---
 
-## 3. 平台 mmap 接入（expect/actual）—— v1 用
+## 3. Platform mmap Access (expect/actual) — used in v1
 
-KMP 下 mmap 的调用方式按平台分派，收敛为一个 `MappedBuffer` 抽象：
+Under KMP, mmap is dispatched per platform and collapsed into a single `MappedBuffer` abstraction:
 
-| 平台 | 实现方式 | 说明 |
+| Platform | Implementation | Notes |
 |---|---|---|
-| Android / JVM | `FileChannel.map()` → `MappedByteBuffer` | **纯 Kotlin，无 NDK/JNI**。`put`/`get` 走快速 JNI 路径；`force()` 即 `msync` |
-| iOS | `platform.posix.mmap()` | Kotlin/Native 直接调 POSIX，**无需 C++**。需 `@ExperimentalNativeApi` 与指针 pinning |
+| Android / JVM | `FileChannel.map()` → `MappedByteBuffer` | **Pure Kotlin, no NDK/JNI**. `put`/`get` take the fast JNI path; `force()` is `msync` |
+| iOS | `platform.posix.mmap()` | Kotlin/Native calls POSIX directly, **no C++ needed**. Requires `@OptIn(ExperimentalForeignApi::class)` and pointer pinning |
 
-**MappedByteBuffer 的边界**：JVM 上无法显式 `unmap`（映射由 GC 管理），`release()` 只能 `force()` + 置空引用。单缓冲、进程级生命周期场景下无实际影响；崩溃持久性不受影响（kill -9 时内核仍回写脏页）。
+A factory `openMappedBuffer(path, size)` hides the platform construction (open + preallocate + map).
 
-**Kotlin/Native 指针安全**：mmap 返回 `CPointer<ByteVar>`，跨线程使用需谨慎。策略：写入时在锁内 `memcpy`，刷盘时把数据快照拷贝进 `ByteArray` 再交给后台线程，避免裸指针跨线程。
+**MappedByteBuffer boundary**: on the JVM the mapping cannot be explicitly `unmap`ped (it is managed by the GC), so `release()` can only `force()` and drop the reference. With a single buffer and a process-level lifetime there is no practical impact; crash durability is unaffected (the kernel still writes back dirty pages on `kill -9`). iOS does call `munmap`.
+
+**Kotlin/Native pointer safety**: mmap returns a `CPointer<ByteVar>`, which must be used carefully across threads. Strategy: `memcpy` inside the lock when writing, and copy the data snapshot into a `ByteArray` before handing it to the background thread when flushing, so raw pointers never cross threads.
 
 ---
 
-## 4. expect/actual 机制 —— v1 用
+## 4. expect/actual Mechanism — used in v1
 
-平台差异收敛为 3 个点：
+Platform differences collapse into a few points:
 
-| 抽象 | Android | JVM | iOS |
+| Abstraction | Android | JVM | iOS |
 |---|---|---|---|
 | `MappedBuffer` | MappedByteBuffer | MappedByteBuffer | posix.mmap |
-| 默认日志目录 | `context.filesDir/logs` | `user.home/logs` | `NSDocumentDirectory` |
-| 控制台输出 | `android.util.Log`（logcat） | `println` | `NSLog` / `os_log` |
+| Default log directory | `getExternalFilesDir("logs")/logs` (falls back to `filesDir`) | `user.home/logs` | `NSDocumentDirectory/logs` |
+| Console output | `android.util.Log` (logcat) | `println` | `NSLog` |
+| Uncaught exception hook | `Thread.setDefaultUncaughtExceptionHandler` | `Thread.setDefaultUncaughtExceptionHandler` | no-op |
 
 ---
 
-## 5. 协程与异步刷盘 —— v1 用
+## 5. Coroutines and Async Flush — used in v1
 
-| 技术点 | 为什么需要 |
+| Topic | Why it is needed |
 |---|---|
-| `kotlinx-coroutines-core` | 跨平台线程抽象；用单线程 dispatcher 承载刷盘 worker |
-| 单 worker + 任务队列 | 写日志线程只做 memcpy 快照，落盘交给后台线程，避免阻塞调用方 |
-| 自包含刷盘任务（FlushBuffer） | 任务持有目标文件句柄 + 数据拷贝，因此缓冲对象被释放后后台任务仍安全 |
-| partial write / 中断处理 | `write` 可能只写一部分或被信号中断，需循环补齐 |
+| `kotlinx-coroutines-core` | Cross-platform threading abstraction; the worker runs on `Dispatchers.Default` |
+| Single worker + task queue | The logging thread only takes a memcpy snapshot; disk I/O is delegated to a background thread so the caller is never blocked. `Worker` uses a `Channel(UNLIMITED)` and processes tasks in FIFO order |
+| Self-contained flush task (`FlushBuffer`) | The task owns the target path and a data copy, so it stays valid after the buffer object is released |
+| `submitAndWait` / `shutdown` | `flush()` blocks until everything submitted so far is written; `shutdown()` closes the queue and joins the worker, so no data is lost on release |
+| partial write / interruption handling | `write` may write only part of the data or be interrupted by a signal, so it must be looped to completion |
 
 ---
 
-## 6. 日期与文件管理 —— v1 用
+## 6. Dates and File Management — used in v1
 
-| 技术点 | 为什么需要 |
+| Topic | Why it is needed |
 |---|---|
-| `kotlinx-datetime` | 跨平台日期计算，用于 `yyyy_MM_dd.txt` 命名与跨天边界 |
-| 按天切文件 | 日志文件命名 `yyyy_MM_dd.txt`，跨天自动切换 |
-| 日期边界比较 | 缓存 `nextSwitchMillis`，每次写入只做一次 `now >= nextSwitchMillis` 比较，避免每行都做日期格式化（热路径开销） |
-| 日志保留清理 | 删除目录中超过 `retentionDays`（默认 7 天）的旧文件；在 init 时与每次切文件时执行 |
-| 进程生命周期 | 进程被杀、`onTrimMemory` 时的刷盘与释放策略 |
+| `kotlinx-datetime` + `kotlin.time.Clock` | Cross-platform date computation for `yyyy_MM_dd.txt` naming and day boundaries |
+| Daily rotation | Log files are named `yyyy_MM_dd.txt` and switch automatically across days |
+| Date boundary comparison | Cache `nextSwitchMillis`; each write only does one `now >= nextSwitchMillis` comparison, avoiding date formatting per line (hot-path cost) |
+| Log retention cleanup | Delete files older than `retentionDays` (7 by default); runs on init and on every rotation |
+| Process lifecycle | Flush and release strategy when the process is killed or `onTrimMemory` fires |
 
 ---
 
-## 7. 序列化 / 压缩 / 加密 —— 后续
+## 7. Serialization / Compression / Encryption — later
 
-| 技术点 | 说明 |
+| Topic | Notes |
 |---|---|
-| 二进制序列化（protobuf / flatbuffers） | 结构化日志、更紧凑的存储格式 |
-| 压缩（zlib / zstd / snappy） | Log4a 用 zlib raw-deflate；xlog 用 zlib。v1 不做，避免压缩耦合进热路径 |
-| 加密（AES） | xlog 支持加密；v1 不做 |
+| Binary serialization (protobuf / flatbuffers) | Structured logs, a more compact storage format |
+| Compression (zlib / zstd / snappy) | Log4a uses zlib raw-deflate; xlog uses zlib. v1 does not, to avoid coupling compression into the hot path |
+| Encryption (AES) | xlog supports encryption; v1 does not |
 
 ---
 
-## 8. 多进程 / 无锁 —— 后续
+## 8. Multi-process / Lock-free — later
 
-| 技术点 | 说明 |
+| Topic | Notes |
 |---|---|
-| 多进程共享 mmap | 多个进程写同一日志文件的并发控制 |
-| 无锁队列 / CAS / 缓存行对齐 | 高并发下的性能优化，v1 用互斥锁即可 |
+| Multi-process shared mmap | Concurrency control when several processes write the same log file |
+| Lock-free queue / CAS / cache-line alignment | Performance optimization under high concurrency; v1 uses a plain lock |
 
 ---
 
-## 9. 参考方案对比
+## 9. Reference Comparison
 
-| 方案 | 语言 | 特点 | 对本项目的价值 |
+| Solution | Language | Characteristics | Value to this project |
 |---|---|---|---|
-| **Log4a** | Kotlin + C++ | 线性 mmap 缓冲、异步刷盘、启动恢复；结构清晰、体量小 | **借鉴引擎设计**（线性缓冲、flushDirty、自包含快照），不照搬其 C++ 实现；修正其缺陷（静默截断、无自动切文件、recursive_mutex、heap 降级无告警） |
-| **xlog (mars)** | C++ | 最成熟，mmap + zlib + AES，多进程 | 后续做压缩/加密/多进程时参考 |
-| **Logan** | Java/Kotlin | 协议简单、单写线程模型 | 参考其流式协议与线程模型 |
+| **Log4a** | Kotlin + C++ | Linear mmap buffer, async flush, startup recovery; clear structure, small footprint | **Borrows the engine design** (linear buffer, dirty-tail recovery, self-contained snapshot) without copying its C++ implementation; fixes its defects (silent truncation, no automatic rotation, `recursive_mutex`, no warning on heap fallback) |
+| **xlog (mars)** | C++ | The most mature; mmap + zlib + AES, multi-process | Reference for compression/encryption/multi-process later |
+| **Logan** | Java/Kotlin | Simple protocol, single-writer thread model | Reference for its streaming protocol and thread model |
 
-### Log4a 实测性能（README，Google Pixel，写 1w 条日志）
+### Log4a measured performance (README, Google Pixel, 10k log lines)
 
-| 方案 | 耗时 |
+| Solution | Time |
 |---|---|
-| 纯内存 | 13 ms |
+| Pure memory | 13 ms |
 | **Log4a** | **50 ms** |
 | File with Buffer | 61 ms |
 | Android Log | 184 ms |
 | File no Buffer | 272 ms |
 
-Log4a 断电/强杀不丢日志（靠下次启动恢复）。
+Log4a does not lose logs on power loss / kill (recovered on the next startup).
 
 ---
 
-## v1 技术栈总结
+## v1 Tech Stack Summary
 
-**必须掌握**：mmap 原理与边界、线性缓冲 + 互斥锁、expect/actual 平台接入（MappedByteBuffer / posix.mmap）、启动脏尾部恢复、协程单 worker 异步刷盘、kotlinx-datetime 日期管理与按天切文件。
+**Must understand**: mmap fundamentals and boundaries, linear buffer + plain lock, expect/actual platform access (MappedByteBuffer / posix.mmap), startup dirty-tail recovery, coroutine single-worker async flush, kotlinx-datetime date management and daily rotation.
 
-**明确不做**：压缩、加密、多进程、无锁、对象池、ByteBuffer 直传优化、Windows 目标。
+**Explicitly out of scope**: compression, encryption, multi-process, lock-free, object pools, direct `ByteBuffer` optimization, Windows target.
