@@ -77,11 +77,11 @@ private fun AppContent(memoryAppender: InMemoryAppender, logDirectory: String) {
             item {
                 Card {
                     Column(Modifier.padding(12.dp)) {
-                        Text("LogConfig 示例（所有参数）", style = MaterialTheme.typography.titleMedium)
+                        Text("LogConfig example (all parameters)", style = MaterialTheme.typography.titleMedium)
                         Text("logDirectory = $logDirectory", style = MaterialTheme.typography.bodySmall)
                         Text("bufferSize = 400 * 1024", style = MaterialTheme.typography.bodySmall)
                         Text("level = Level.DEBUG", style = MaterialTheme.typography.bodySmall)
-                        Text("formatter = 自定义 \"\$level/\$tag: \$message\"", style = MaterialTheme.typography.bodySmall)
+                        Text("formatter = custom \"\$level/\$tag: \$message\"", style = MaterialTheme.typography.bodySmall)
                         Text("retentionDays = 7", style = MaterialTheme.typography.bodySmall)
                         Text("isDebug = true", style = MaterialTheme.typography.bodySmall)
                         Text("appenders = [ConsoleAppender, InMemoryAppender]", style = MaterialTheme.typography.bodySmall)
@@ -124,8 +124,9 @@ private fun AppContent(memoryAppender: InMemoryAppender, logDirectory: String) {
                         Button(onClick = { crashInMainThread() }) { Text("Crash (main)") }
                     }
                     Text(
-                        "后台线程崩溃进程不退出；主线程崩溃会终止进程（Android 上即闪退），" +
-                            "重启后可在日志目录看到 crash 落盘。",
+                        "A background thread crash does not exit the process; a main thread crash " +
+                            "terminates it (i.e. a crash on Android). After restart, the crash log " +
+                            "can be found in the log directory.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -133,7 +134,7 @@ private fun AppContent(memoryAppender: InMemoryAppender, logDirectory: String) {
 
             item {
                 Text(
-                    "InMemoryAppender 收集（最近 ${memoryAppender.lines.size} 行）",
+                    "InMemoryAppender collected (last ${memoryAppender.lines.size} lines)",
                     style = MaterialTheme.typography.titleMedium,
                 )
             }
