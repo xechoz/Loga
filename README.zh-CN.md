@@ -6,6 +6,9 @@
 
 日志行写入内存映射文件，因此写入开销很低，并且能在进程被杀后存活：脏页保留在内核页缓存中并最终刷入磁盘。后台 worker 从映射中拷贝快照，追加到按天滚动的日志文件。
 
+> **说明**：本库主要由 AI 编写（DeepSeek V4 Pro 与 DeepSeek Flash），
+> 作者主要提供了 [`docs/architecture.md`](docs/architecture.md) 中的设计规范。
+
 ## 平台
 
 | 平台 | Target | mmap 实现 |

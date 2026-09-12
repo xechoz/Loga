@@ -9,6 +9,10 @@ a process kill: dirty pages stay in the kernel page cache and are flushed to
 disk. A background worker copies snapshots out of the mapping and appends them
 to daily log files.
 
+> **Attribution**: This library was primarily written by AI (DeepSeek V4 Pro
+> and DeepSeek Flash). The human author mainly provided the design
+> specification in [`docs/architecture.md`](docs/architecture.md).
+
 ## Platforms
 
 | Platform | Target | mmap implementation |
